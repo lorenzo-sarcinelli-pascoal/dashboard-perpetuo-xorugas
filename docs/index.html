@@ -879,7 +879,9 @@ function findNumericCampaignId(venda) {
 
 function processData(rawVendas, rawMeta, cfg) {
   const EFFECTIVE_STATUS = new Set(['paid', 'approved', 'completed', 'venda']);
-  const VALID_STATUS = new Set(['paid', 'approved', 'completed', 'venda', 'refunded']);
+  const REFUND_STATUS = new Set(['refunded']);
+  const KNOWN_NON_EFFECTIVE = new Set(['waiting_payment', 'billet_printed', 'cancelled', 'canceled']);
+  const VALID_STATUS = new Set([...EFFECTIVE_STATUS, ...REFUND_STATUS, ...KNOWN_NON_EFFECTIVE]);
   const diagnostics = {
     rawSales: rawVendas.length,
     statusCountsRaw: {},
@@ -925,6 +927,9 @@ function processData(rawVendas, rawMeta, cfg) {
 
   if (cfg.statusFilter === 'paid') {
     vendas = vendas.filter(v => EFFECTIVE_STATUS.has(v._status));
+  } else {
+    /* "Todos" = efetivadas + refunded (não inclui waiting/billet/cancelled/unknown). */
+    vendas = vendas.filter(v => EFFECTIVE_STATUS.has(v._status) || REFUND_STATUS.has(v._status));
   }
   diagnostics.afterStatusFilter = vendas.length;
 
