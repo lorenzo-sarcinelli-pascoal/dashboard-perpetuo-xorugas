@@ -28,7 +28,7 @@ As abas devem ter **cabeçalho na primeira linha** com as colunas esperadas pelo
 1. Envie este diretório para um repositório; branch padrão `main`.
 2. **Settings → Pages → Build and deployment**: escolha **GitHub Actions**.
 3. O workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml) publica a pasta `docs/` a cada push em `main`.
-4. Acesse o site em `https://<usuario>.github.io/<repo>/` (ou o domínio configurado).
+4. Acesse o site em `https://lorenzo-sarcinelli-pascoal.github.io/dashboard-perpetuo-xorugas/` (após o workflow “Deploy GitHub Pages” concluir com sucesso).
 
 Teste local: na pasta `docs/`, `python3 -m http.server 8080` e abra `http://localhost:8080/index.html`.
 
