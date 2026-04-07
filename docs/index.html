@@ -585,6 +585,9 @@ if (typeof Chart !== 'undefined' && typeof ChartDataLabels !== 'undefined') {
 const STORAGE_KEY = 'the_perpetuo_xorugas_dashboard_config';
 const OFFER_CATEGORIES = ['Produto Principal','Order Bump 1','Order Bump 2','Upsell 1','Downsell 1','Ignorar'];
 const DEFAULT_OFFER_MAP = {};
+const DEFAULT_SHEET_ID = '1QRlHLwtIVEQSUmbPRcu6Lq_fU7hkS1MZQAv1ZgNIuWY';
+const DEFAULT_VENDAS_SHEET = 'vendas';
+const DEFAULT_META_SHEET = 'metaads';
 
 function loadConfig() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; }
@@ -596,11 +599,11 @@ function getConfig() {
   const saved = loadConfig();
   return {
     apiKey: saved.apiKey || '',
-    sheetId: saved.sheetId || '',
-    vendasSheet: saved.vendasSheet || '',
-    metaSheet: saved.metaSheet || '',
+    sheetId: saved.sheetId || DEFAULT_SHEET_ID,
+    vendasSheet: saved.vendasSheet || DEFAULT_VENDAS_SHEET,
+    metaSheet: saved.metaSheet || DEFAULT_META_SHEET,
     clientName: saved.clientName || 'Xorugas',
-    matchMethod: saved.matchMethod || 'campaign_id',
+    matchMethod: saved.matchMethod || 'name',
     utmCampaign: saved.utmCampaign || 'utm_campaign',
     utmAdset: saved.utmAdset || 'utm_medium',
     utmAd: saved.utmAd || 'utm_content',
