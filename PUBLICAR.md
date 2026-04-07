@@ -1,46 +1,49 @@
 # Publicar em https://lorenzo-sarcinelli-pascoal.github.io/dashboard-perpetuo-xorugas/
 
-Mesmo modelo do [dashboard-perpetuo](https://lorenzo-sarcinelli-pascoal.github.io/dashboard-perpetuo/): um **repositório GitHub** com o nome **`dashboard-perpetuo-xorugas`** e Pages via **GitHub Actions**.
+O workflow envia a pasta **`docs/`** para a branch **`gh-pages`**. O GitHub Pages serve a partir dessa branch (modelo estável; não depende de “GitHub Actions” como *source* no painel).
 
 ## 1. Criar o repositório no GitHub
 
-1. Abra [github.com/new](https://github.com/new).
-2. **Repository name:** `dashboard-perpetuo-xorugas`
-3. **Public**
-4. **Sem** README, .gitignore ou license (evita conflito no primeiro push).
-5. Create repository.
+1. [github.com/new](https://github.com/new) → nome **`dashboard-perpetuo-xorugas`** → **Public** → sem README inicial.
 
-## 2. Enviar o código a partir do mono-repo `debriefings-the`
+## 2. Enviar o código (mono-repo `debriefings-the`)
 
-Na **raiz** do repositório que contém a pasta `dashboard-perpetuo-xorugas/`:
+Na **raiz** do repositório que contém `dashboard-perpetuo-xorugas/`:
 
 ```bash
 cd /caminho/para/debriefings-the-main
-
-git fetch origin
 git pull origin main
 
+git branch -D xorugas-github-pages 2>/dev/null
 git subtree split -P dashboard-perpetuo-xorugas -b xorugas-github-pages
 
 git push git@github.com:lorenzo-sarcinelli-pascoal/dashboard-perpetuo-xorugas.git xorugas-github-pages:main --force
 ```
 
-(Se usar HTTPS: `https://github.com/lorenzo-sarcinelli-pascoal/dashboard-perpetuo-xorugas.git`.)
+## 3. Primeiro deploy (Actions)
 
-## 3. Ativar Pages
+Abra **Actions** e espere o workflow **Deploy GitHub Pages** concluir. Ele cria/atualiza a branch **`gh-pages`**.
 
-No repo **`dashboard-perpetuo-xorugas`** no GitHub:
+## 4. Ligar o Pages na branch `gh-pages`
 
-**Settings → Pages → Build and deployment → Source:** **GitHub Actions**.
+No repo **`dashboard-perpetuo-xorugas`**:
 
-## 4. Primeiro deploy
+**Settings → Pages → Build and deployment**
 
-O workflow **Deploy GitHub Pages** corre no push em `main`. Abra a aba **Actions** e confirme que terminou em verde.
+- **Source:** **Deploy from a branch**
+- **Branch:** **`gh-pages`** / **`/ (root)`**
+- Save
 
-## URL final
+## 5. URL
 
 **https://lorenzo-sarcinelli-pascoal.github.io/dashboard-perpetuo-xorugas/**
 
 ---
 
-**Manutenção:** sempre que alterar arquivos dentro de `dashboard-perpetuo-xorugas/` no mono-repo, faça commit no `debriefings-the` e volte a executar os comandos do passo 2 (subtree split + push) para atualizar o site.
+### Se antes falhou com `configure-pages`
+
+Esse erro vinha do workflow antigo (artifact + “GitHub Actions” como source). O fluxo atual **não usa** `configure-pages`. Faça pull do mono-repo, **subtree push** de novo e configure o Pages como no passo 4.
+
+### Manutenção
+
+Após alterar `dashboard-perpetuo-xorugas/` no mono-repo: commit em `debriefings-the`, depois de novo `subtree split` + `push` (passo 2).
