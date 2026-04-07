@@ -517,9 +517,9 @@
       <div class="overflow-x"><table id="tableCampaign"><thead></thead><tbody></tbody></table></div>
     </section>
 
-    <!-- Top Criativos -->
+    <!-- Top conjuntos: gasto por Conjunto (Meta), match utm_medium -->
     <section class="section" id="sectionCreative">
-      <p class="section-title">Top criativos</p>
+      <p class="section-title" id="sectionCreativeTitle">Top conjuntos (UTM medium)</p>
       <p class="insight1" id="creativeInsight"></p>
       <div class="overflow-x"><table id="tableCreative"><thead></thead><tbody></tbody></table></div>
     </section>
@@ -745,20 +745,19 @@ function normalizeXorugasUtmSource(raw) {
 }
 
 /**
- * Preenche chaves que processData() espera, sem apagar colunas originais.
- * Se a linha já tiver payment_price, date, etc. (export antigo), não sobrescreve.
+ * Xorugas: datas em update_time; faturamento líquido em commision_value_brl (ver processData).
  */
 function normalizeXorugasVenda(row) {
   const out = { ...row };
-  if (sheetValEmpty(out.payment_price)) {
-    const p = firstDefinedRow(row, ['price_brl', 'price', 'offer_price', 'product_value']);
-    if (!sheetValEmpty(p)) out.payment_price = p;
+  if (sheetValEmpty(out.commision_value_brl) && !sheetValEmpty(row.comission_value_brl)) {
+    out.commision_value_brl = row.comission_value_brl;
   }
   if (sheetValEmpty(out.approved_date) && sheetValEmpty(out.order_date)) {
-    const ct = row.create_time;
     const ut = row.update_time;
-    if (!sheetValEmpty(ct)) out.approved_date = ct;
-    if (!sheetValEmpty(ut)) out.order_date = ut;
+    if (!sheetValEmpty(ut)) {
+      out.approved_date = ut;
+      out.order_date = ut;
+    }
   }
   if (sheetValEmpty(out.product_name) && !sheetValEmpty(out.offer_name)) {
     out.product_name = out.offer_name;
@@ -773,27 +772,17 @@ function normalizeXorugasVenda(row) {
  */
 function normalizeXorugasMeta(row) {
   const out = { ...row };
-  if (sheetValEmpty(out.date)) {
-    const d = firstDefinedRow(row, ['data', 'id_data']);
-    if (!sheetValEmpty(d)) out.date = d;
-  }
+  if (sheetValEmpty(out.date) && !sheetValEmpty(row.data)) out.date = row.data;
   if (!Object.prototype.hasOwnProperty.call(out, 'spend') || sheetValEmpty(out.spend)) {
     if (Object.prototype.hasOwnProperty.call(row, 'gasto')) out.spend = row.gasto;
   }
   if (sheetValEmpty(out.impressions) && !sheetValEmpty(row.impressoes)) out.impressions = row.impressoes;
-  /* Cliques: clicks; se vazio, unique_clicks */
-  if (sheetValEmpty(out.inline_link_clicks)) {
-    if (!sheetValEmpty(row.clicks)) out.inline_link_clicks = row.clicks;
-    else if (!sheetValEmpty(row.unique_clicks)) out.inline_link_clicks = row.unique_clicks;
-  }
+  if (sheetValEmpty(out.inline_link_clicks) && !sheetValEmpty(row.clicks)) out.inline_link_clicks = row.clicks;
   if (sheetValEmpty(out.landing_page_view) && !sheetValEmpty(row.land_page_views)) {
     out.landing_page_view = row.land_page_views;
   }
   if (sheetValEmpty(out.lead) && !sheetValEmpty(row.leads)) out.lead = row.leads;
-  if (sheetValEmpty(out.purchase)) {
-    const conv = row.conversions;
-    if (!sheetValEmpty(conv)) out.purchase = conv;
-  }
+  if (sheetValEmpty(out.adset_name) && !sheetValEmpty(row.Conjunto)) out.adset_name = row.Conjunto;
   if (sheetValEmpty(out.campaign_id) && !sheetValEmpty(row.campaign_id)) out.campaign_id = row.campaign_id;
   if (sheetValEmpty(out.campaign_name) && !sheetValEmpty(row.Campanha)) out.campaign_name = row.Campanha;
   if (sheetValEmpty(out.ad_name) && !sheetValEmpty(row.ad)) out.ad_name = row.ad;
@@ -827,22 +816,23 @@ function parseDate(v) {
 }
 
 function findNumericCampaignId(venda) {
-  for (const col of ['campaign_id', 'src', 'sck', 'transaction_ext', 'offer_ext']) {
-    const v = String(venda[col] || '');
-    if (/^\d{10,}$/.test(v.trim())) return v.trim();
-  }
+  const v = String(venda.campaign_id || '');
+  if (/^\d{10,}$/.test(v.trim())) return v.trim();
   return null;
 }
 
 function processData(rawVendas, rawMeta, cfg) {
   let vendas = rawVendas.map(v => {
-    const price = parseNum(v.payment_price);
     const platFee = parseNum(v.commission_plataform);
+    const liquidoBrl = firstDefinedRow(v, ['commision_value_brl', 'comission_value_brl']);
+    const hasLiquidoXorugas = !sheetValEmpty(liquidoBrl);
+    const net = hasLiquidoXorugas ? parseNum(liquidoBrl) : (parseNum(v.payment_price) - platFee);
+    const grossLegacy = parseNum(v.payment_price);
     return {
       ...v,
-      _price: price,
+      _price: hasLiquidoXorugas ? net : grossLegacy,
       _platformFee: platFee,
-      _netPrice: price - platFee,
+      _netPrice: net,
       _date: parseDate(v.approved_date || v.order_date),
       _source: String(v.utm_source || '').trim(),
       _status: String(v.status || v.src || '').toLowerCase().trim()
@@ -1018,28 +1008,31 @@ function groupByCampaign(vendas, meta, cfg) {
 }
 
 function groupByCreative(vendas, meta, cfg) {
-  const ads = {};
+  const metaHasAdset = meta.some(m => String(m.adset_name || '').trim());
+  const buckets = {};
   meta.forEach(m => {
-    const name = String(m.ad_name || '').trim();
+    const name = metaHasAdset
+      ? (String(m.adset_name || '').trim() || String(m.ad_name || '').trim())
+      : String(m.ad_name || '').trim();
     if (!name) return;
-    if (!ads[name]) ads[name] = { name, spend: 0, sales: 0, revenue: 0 };
-    ads[name].spend += m._spend;
+    if (!buckets[name]) buckets[name] = { name, spend: 0, sales: 0, revenue: 0 };
+    buckets[name].spend += m._spend;
   });
 
   if (cfg.matchMethod === 'name') {
-    const utmCol = cfg.utmAd || 'utm_content';
+    const utmCol = metaHasAdset ? (cfg.utmAdset || 'utm_medium') : (cfg.utmAd || 'utm_content');
     vendas.forEach(v => {
       if (v._source !== 'Meta_Ads') return;
       const utmVal = String(v[utmCol] || '').trim().toLowerCase();
       if (!utmVal) return;
-      for (const a of Object.values(ads)) {
+      for (const a of Object.values(buckets)) {
         if (a.name.toLowerCase().includes(utmVal) || utmVal.includes(a.name.toLowerCase())) {
           a.sales++; a.revenue += v._netPrice; break;
         }
       }
     });
   }
-  return Object.values(ads).sort((a, b) => b.sales - a.sales).slice(0, 10);
+  return Object.values(buckets).sort((a, b) => b.sales - a.sales).slice(0, 10);
 }
 
 function groupBySource(vendas) {
@@ -1373,10 +1366,19 @@ function renderTableCampaign(byCampaign) {
   $('tableCampaign').innerHTML = `<thead>${thead}</thead><tbody>${rows}${totalRow}</tbody>`;
 }
 
-function renderTableCreative(byCreative) {
+function renderTableCreative(byCreative, metaHasAdset) {
   const top = byCreative[0];
-  $('creativeInsight').textContent = top && top.sales > 0 ? `${top.name} lidera com ${top.sales} vendas.` : 'Match por criativo requer metodo "nome".';
-  const thead = `<tr><th>Anuncio</th><th class="r">Vendas</th><th class="r">Invest.</th><th class="r">Lucro</th><th class="r">CAC</th><th class="r">ROAS</th></tr>`;
+  const colLabel = metaHasAdset ? 'Conjunto' : 'Anuncio';
+  const titleEl = $('sectionCreativeTitle');
+  if (titleEl) {
+    titleEl.textContent = metaHasAdset ? 'Top conjuntos (UTM medium)' : 'Top criativos';
+  }
+  $('creativeInsight').textContent = top && top.sales > 0
+    ? `${top.name} lidera com ${top.sales} vendas.`
+    : (metaHasAdset
+      ? 'Match por conjunto requer metodo "nome" e utm_medium alinhado ao Conjunto.'
+      : 'Match por criativo requer metodo "nome".');
+  const thead = `<tr><th>${colLabel}</th><th class="r">Vendas</th><th class="r">Invest.</th><th class="r">Lucro</th><th class="r">CAC</th><th class="r">ROAS</th></tr>`;
   const rows = byCreative.map(a => {
     const cac = a.sales > 0 ? a.spend / a.sales : null;
     const roas = a.spend > 0 ? a.revenue / a.spend : null;
@@ -1758,7 +1760,7 @@ async function loadAndRender() {
     renderCharts(finalData.byDay, finalData.kpi);
     renderTableOffer(finalData.byOffer, finalData.kpi);
     renderTableCampaign(finalData.byCampaign);
-    renderTableCreative(finalData.byCreative);
+    renderTableCreative(finalData.byCreative, finalData.meta.some(m => String(m.adset_name || '').trim()));
     renderTableSource(finalData.bySource, finalData.kpi);
     renderSplit(finalData.kpi, finalData.byCampaign, finalData.bySource);
     renderFooter(finalCfg);
@@ -1806,7 +1808,7 @@ async function refresh() {
   renderCharts(finalData.byDay, finalData.kpi);
   renderTableOffer(finalData.byOffer, finalData.kpi);
   renderTableCampaign(finalData.byCampaign);
-  renderTableCreative(finalData.byCreative);
+  renderTableCreative(finalData.byCreative, finalData.meta.some(m => String(m.adset_name || '').trim()));
   renderTableSource(finalData.bySource, finalData.kpi);
   renderSplit(finalData.kpi, finalData.byCampaign, finalData.bySource);
   renderFooter(cfg);

@@ -20,23 +20,25 @@ O motor interno ainda usa os nomes do export Hubla / `metaads_daily`. Antes de `
 
 | Canônico (motor) | Aba vendas (Xorugas) | Notas |
 |------------------|----------------------|--------|
-| `payment_price` | `price_brl` → `price` → `offer_price` → `product_value` | só se `payment_price` vazio |
-| `approved_date` / `order_date` | `create_time` / `update_time` | `parseDate` aceita data e datetime |
-| `commission_plataform` | igual | — |
+| `_netPrice` / receita | `commision_value_brl` ou `comission_value_brl` | se preenchido, faturamento líquido é esse valor; `payment_price` não entra na receita |
+| `payment_price` | coluna da planilha (sem fallback) | export antigo sem líquido: `_netPrice` = `payment_price` − `commission_plataform` |
+| `approved_date` e `order_date` | `update_time` | só quando ambos canônicos vazios; não usa `create_time` |
+| `commission_plataform` | igual | KPI “Taxa plat.” (soma separada) |
 | `utm_*`, `status`, `offer_name` | igual | `utm_source` meta/fb/ig → `Meta_Ads` |
-| `campaign_id` (match) | + `transaction_ext`, `offer_ext` | IDs longos só |
+| `campaign_id` (match numérico) | `campaign_id` | só esta coluna (10+ dígitos) |
 
 | Canônico (motor) | Aba metaads (Xorugas) | Notas |
 |------------------|------------------------|--------|
-| `date` | `data` → `id_data` | — |
+| `date` | `data` | sem fallback `id_data` |
 | `spend` | `gasto` | — |
 | `impressions` | `impressoes` | — |
-| `inline_link_clicks` | `clicks` → `unique_clicks` | — |
+| `inline_link_clicks` | `clicks` | sem `unique_clicks` |
 | `landing_page_view` | `land_page_views` | — |
 | `lead` | `leads` | — |
-| `purchase` | `conversions` | — |
+| `purchase` | — | não mapeia `conversions` |
 | `campaign_name` | `Campanha` | maiúscula |
 | `ad_name` | `ad` | — |
+| `adset_name` | `Conjunto` | gasto e “Top conjuntos” por conjunto; match vendas: `utm_medium` × nome do conjunto (método nome) |
 
 ## Google Sheets
 
