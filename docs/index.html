@@ -517,9 +517,9 @@
       <div class="overflow-x"><table id="tableCampaign"><thead></thead><tbody></tbody></table></div>
     </section>
 
-    <!-- Top conjuntos: gasto por Conjunto (Meta), match utm_medium -->
+    <!-- Top criativos: ad (Meta) x utm_content (vendas) -->
     <section class="section" id="sectionCreative">
-      <p class="section-title" id="sectionCreativeTitle">Top conjuntos (UTM medium)</p>
+      <p class="section-title" id="sectionCreativeTitle">Top criativos (UTM content)</p>
       <p class="insight1" id="creativeInsight"></p>
       <div class="overflow-x"><table id="tableCreative"><thead></thead><tbody></tbody></table></div>
     </section>
@@ -1088,29 +1088,24 @@ function groupByCampaign(vendas, meta, cfg) {
 }
 
 function groupByCreative(vendas, meta, cfg) {
-  const metaHasAdset = meta.some(m => String(m.adset_name || '').trim());
   const buckets = {};
   meta.forEach(m => {
-    const name = metaHasAdset
-      ? (String(m.adset_name || '').trim() || String(m.ad_name || '').trim())
-      : String(m.ad_name || '').trim();
+    const name = String(m.ad_name || '').trim();
     if (!name) return;
     if (!buckets[name]) buckets[name] = { name, spend: 0, sales: 0, revenue: 0 };
     buckets[name].spend += m._spend;
   });
 
-  if (cfg.matchMethod === 'name') {
-    vendas.forEach(v => {
-      if (v._source !== 'Meta_Ads') return;
-      const utmVal = String(metaHasAdset ? (v.utm_medium || '') : (v.utm_content || '')).trim().toLowerCase();
-      if (!utmVal) return;
-      for (const a of Object.values(buckets)) {
-        if (a.name.toLowerCase().includes(utmVal) || utmVal.includes(a.name.toLowerCase())) {
-          a.sales++; a.revenue += v._netPrice; break;
-        }
+  vendas.forEach(v => {
+    if (v._source !== 'Meta_Ads') return;
+    const utmVal = String(v.utm_content || '').trim().toLowerCase();
+    if (!utmVal) return;
+    for (const a of Object.values(buckets)) {
+      if (a.name.toLowerCase().includes(utmVal) || utmVal.includes(a.name.toLowerCase())) {
+        a.sales++; a.revenue += v._netPrice; break;
       }
-    });
-  }
+    }
+  });
   return Object.values(buckets).sort((a, b) => b.sales - a.sales).slice(0, 10);
 }
 
@@ -1451,19 +1446,14 @@ function renderTableCampaign(byCampaign) {
   $('tableCampaign').innerHTML = `<thead>${thead}</thead><tbody>${rows}${totalRow}</tbody>`;
 }
 
-function renderTableCreative(byCreative, metaHasAdset) {
+function renderTableCreative(byCreative) {
   const top = byCreative[0];
-  const colLabel = metaHasAdset ? 'Conjunto' : 'Anuncio';
   const titleEl = $('sectionCreativeTitle');
-  if (titleEl) {
-    titleEl.textContent = metaHasAdset ? 'Top conjuntos (UTM medium)' : 'Top criativos';
-  }
+  if (titleEl) titleEl.textContent = 'Top criativos (UTM content)';
   $('creativeInsight').textContent = top && top.sales > 0
     ? `${top.name} lidera com ${top.sales} vendas.`
-    : (metaHasAdset
-      ? 'Match por conjunto requer metodo "nome" e utm_medium alinhado ao Conjunto.'
-      : 'Match por criativo requer metodo "nome".');
-  const thead = `<tr><th>${colLabel}</th><th class="r">Vendas</th><th class="r">Invest.</th><th class="r">Lucro</th><th class="r">CAC</th><th class="r">ROAS</th></tr>`;
+    : 'Match por criativo usa ad (Meta) x utm_content (vendas).';
+  const thead = `<tr><th>Anuncio</th><th class="r">Vendas</th><th class="r">Invest.</th><th class="r">Lucro</th><th class="r">CAC</th><th class="r">ROAS</th></tr>`;
   const rows = byCreative.map(a => {
     const cac = a.sales > 0 ? a.spend / a.sales : null;
     const roas = a.spend > 0 ? a.revenue / a.spend : null;
@@ -1848,7 +1838,7 @@ async function loadAndRender() {
     renderCharts(finalData.byDay, finalData.kpi);
     renderTableOffer(finalData.byOffer, finalData.kpi);
     renderTableCampaign(finalData.byCampaign);
-    renderTableCreative(finalData.byCreative, finalData.meta.some(m => String(m.adset_name || '').trim()));
+    renderTableCreative(finalData.byCreative);
     renderTableSource(finalData.bySource, finalData.kpi);
     renderSplit(finalData.kpi, finalData.byCampaign, finalData.bySource);
     renderFooter(finalCfg);
@@ -1904,7 +1894,7 @@ async function refresh() {
   renderCharts(finalData.byDay, finalData.kpi);
   renderTableOffer(finalData.byOffer, finalData.kpi);
   renderTableCampaign(finalData.byCampaign);
-  renderTableCreative(finalData.byCreative, finalData.meta.some(m => String(m.adset_name || '').trim()));
+  renderTableCreative(finalData.byCreative);
   renderTableSource(finalData.bySource, finalData.kpi);
   renderSplit(finalData.kpi, finalData.byCampaign, finalData.bySource);
   renderFooter(cfg);
