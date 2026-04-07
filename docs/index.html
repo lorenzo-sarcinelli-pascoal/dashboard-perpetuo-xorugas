@@ -769,6 +769,25 @@ function normalizeXorugasUtmSource(raw) {
   return s;
 }
 
+function normalizeSource(raw) {
+  const s = String(raw || '').trim();
+  const low = s.toLowerCase();
+  if (!low) return 'desconhecido';
+  if (XORUGAS_UTM_SOURCE_AS_META_ADS.has(low) || low === 'meta_ads' || low === 'meta ads') return 'Meta_Ads';
+  if (low === 'bio') return 'bio';
+  if (low === 'manychat') return 'manychat';
+  if (low === 'hubla') return 'hubla';
+  return s;
+}
+
+function getTransactionKey(v, idx) {
+  const tx = String(v.transaction_ext || '').trim();
+  if (tx) return tx;
+  const fallback = String(v.transaction_id || v.order_id || '').trim();
+  if (fallback) return fallback;
+  return `row-${idx}`;
+}
+
 /**
  * Xorugas: datas em update_time; faturamento líquido em commision_value_brl (ver processData).
  */
@@ -861,9 +880,11 @@ function processData(rawVendas, rawMeta, cfg) {
   const diagnostics = {
     rawSales: rawVendas.length,
     statusCountsRaw: {},
+    sourceCountsBeforeFilter: {},
     afterStatusFilter: 0,
     afterDateFilter: 0,
-    afterSourceFilter: 0
+    afterSourceFilter: 0,
+    afterDistinctTx: 0
   };
 
   let vendas = rawVendas.map(v => {
@@ -878,7 +899,7 @@ function processData(rawVendas, rawMeta, cfg) {
       _platformFee: platFee,
       _netPrice: net,
       _date: parseDate(v.update_time || v.approved_date || v.order_date),
-      _source: String(v.utm_source || '').trim(),
+      _source: normalizeSource(firstDefinedRow(v, ['utm_source', 'source', 'src'])),
       _status: String(v.status || v.src || '').toLowerCase().trim()
     };
   });
@@ -895,7 +916,8 @@ function processData(rawVendas, rawMeta, cfg) {
     }
     if (!VALID_STATUS.has(v._status)) v._status = 'unknown';
     diagnostics.statusCountsRaw[v._status] = (diagnostics.statusCountsRaw[v._status] || 0) + 1;
-    if (!v._source || v._source === '') v._source = 'desconhecido';
+    v._source = normalizeSource(v._source);
+    diagnostics.sourceCountsBeforeFilter[v._source] = (diagnostics.sourceCountsBeforeFilter[v._source] || 0) + 1;
   });
 
   if (cfg.statusFilter === 'paid') {
@@ -907,9 +929,25 @@ function processData(rawVendas, rawMeta, cfg) {
   if (cfg.dateTo) vendas = vendas.filter(v => !v._date || v._date <= cfg.dateTo);
   diagnostics.afterDateFilter = vendas.length;
   if (cfg.sources && cfg.sources.length > 0) {
-    vendas = vendas.filter(v => cfg.sources.includes(v._source) || v._source === 'desconhecido');
+    const normalizedSources = cfg.sources.map(normalizeSource);
+    vendas = vendas.filter(v => normalizedSources.includes(v._source) || v._source === 'desconhecido');
   }
   diagnostics.afterSourceFilter = vendas.length;
+
+  const txMap = {};
+  vendas.forEach((v, idx) => {
+    const key = getTransactionKey(v, idx);
+    const current = txMap[key];
+    if (!current) txMap[key] = v;
+    else {
+      const hasCurrentDate = !!current._date;
+      const hasNewDate = !!v._date;
+      if (!hasCurrentDate && hasNewDate) txMap[key] = v;
+      else if (hasCurrentDate && hasNewDate && v._date > current._date) txMap[key] = v;
+    }
+  });
+  vendas = Object.values(txMap);
+  diagnostics.afterDistinctTx = vendas.length;
 
   let meta = rawMeta.map(m => ({
     ...m,
@@ -1038,10 +1076,9 @@ function groupByCampaign(vendas, meta, cfg) {
       }
     });
   } else {
-    const utmCol = cfg.utmCampaign || 'utm_campaign';
     vendas.forEach(v => {
       if (v._source !== 'Meta_Ads') return;
-      const utmVal = String(v[utmCol] || '').trim().toLowerCase();
+      const utmVal = String(v.utm_campaign || '').trim().toLowerCase();
       if (!utmVal) return;
       for (const c of Object.values(campaigns)) {
         if (c.name.toLowerCase().includes(utmVal) || utmVal.includes(c.name.toLowerCase())) {
@@ -1066,10 +1103,9 @@ function groupByCreative(vendas, meta, cfg) {
   });
 
   if (cfg.matchMethod === 'name') {
-    const utmCol = metaHasAdset ? (cfg.utmAdset || 'utm_medium') : (cfg.utmAd || 'utm_content');
     vendas.forEach(v => {
       if (v._source !== 'Meta_Ads') return;
-      const utmVal = String(v[utmCol] || '').trim().toLowerCase();
+      const utmVal = String(metaHasAdset ? (v.utm_medium || '') : (v.utm_content || '')).trim().toLowerCase();
       if (!utmVal) return;
       for (const a of Object.values(buckets)) {
         if (a.name.toLowerCase().includes(utmVal) || utmVal.includes(a.name.toLowerCase())) {
@@ -1842,9 +1878,11 @@ async function loadAndRender() {
 
     const d = finalData.diagnostics || {};
     const rawCounts = d.statusCountsRaw || {};
+    const srcCounts = d.sourceCountsBeforeFilter || {};
     const statusCompact = Object.keys(rawCounts).sort().map(k => `${k}:${rawCounts[k]}`).join(', ');
+    const srcCompact = Object.keys(srcCounts).sort().map(k => `${k}:${srcCounts[k]}`).join(', ');
     showStatus(
-      `OK · status bruto [${statusCompact || 'sem status'}] · após status: ${fmtNum(d.afterStatusFilter || 0)} · após data: ${fmtNum(d.afterDateFilter || 0)} · final: ${fmtNum(d.afterSourceFilter || finalData.vendas.length)} vendas`,
+      `OK · status [${statusCompact || 'sem status'}] · fontes [${srcCompact || 'sem fontes'}] · após status: ${fmtNum(d.afterStatusFilter || 0)} · após data: ${fmtNum(d.afterDateFilter || 0)} · após source: ${fmtNum(d.afterSourceFilter || 0)} · transacoes unicas: ${fmtNum(d.afterDistinctTx || finalData.vendas.length)}`,
       'ok'
     );
   } catch (err) {
