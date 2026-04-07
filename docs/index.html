@@ -759,7 +759,7 @@ function getOfferCategoryForSale(v, offerMap) {
 
 /** utm_source da planilha → Meta_Ads para bater no filtro "Fontes" do painel */
 const XORUGAS_UTM_SOURCE_AS_META_ADS = new Set([
-  'meta', 'facebook', 'fb', 'instagram', 'ig', 'meta_ads', 'meta ads', 'anuncios meta', 'anúncios meta', 'fbads'
+  'meta', 'metaads', 'facebook', 'fb', 'instagram', 'ig', 'meta_ads', 'meta ads', 'anuncios meta', 'anúncios meta', 'fbads'
 ]);
 
 function normalizeXorugasUtmSource(raw) {
@@ -928,10 +928,7 @@ function processData(rawVendas, rawMeta, cfg) {
   if (cfg.dateFrom) vendas = vendas.filter(v => !v._date || v._date >= cfg.dateFrom);
   if (cfg.dateTo) vendas = vendas.filter(v => !v._date || v._date <= cfg.dateTo);
   diagnostics.afterDateFilter = vendas.length;
-  if (cfg.sources && cfg.sources.length > 0) {
-    const normalizedSources = cfg.sources.map(normalizeSource);
-    vendas = vendas.filter(v => normalizedSources.includes(v._source) || v._source === 'desconhecido');
-  }
+  /* Xorugas: não filtrar vendas por fonte para evitar perda indevida por variação de utm_source. */
   diagnostics.afterSourceFilter = vendas.length;
 
   const txMap = {};
