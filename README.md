@@ -14,6 +14,30 @@ Cópia do dashboard perpétuo com **Google Sheets** (API Key + Spreadsheet ID + 
 
 Configuração fica no **localStorage** do navegador (`the_perpetuo_xorugas_dashboard_config`), separada do dashboard “Ju”.
 
+## Mapeamento da planilha Xorugas
+
+O motor interno ainda usa os nomes do export Hubla / `metaads_daily`. Antes de `processData`, as linhas passam por `normalizeXorugasVenda` e `normalizeXorugasMeta` em [`docs/index.html`](docs/index.html) (comentários no código).
+
+| Canônico (motor) | Aba vendas (Xorugas) | Notas |
+|------------------|----------------------|--------|
+| `payment_price` | `price_brl` → `price` → `offer_price` → `product_value` | só se `payment_price` vazio |
+| `approved_date` / `order_date` | `create_time` / `update_time` | `parseDate` aceita data e datetime |
+| `commission_plataform` | igual | — |
+| `utm_*`, `status`, `offer_name` | igual | `utm_source` meta/fb/ig → `Meta_Ads` |
+| `campaign_id` (match) | + `transaction_ext`, `offer_ext` | IDs longos só |
+
+| Canônico (motor) | Aba metaads (Xorugas) | Notas |
+|------------------|------------------------|--------|
+| `date` | `data` → `id_data` | — |
+| `spend` | `gasto` | — |
+| `impressions` | `impressoes` | — |
+| `inline_link_clicks` | `clicks` → `unique_clicks` | — |
+| `landing_page_view` | `land_page_views` | — |
+| `lead` | `leads` | — |
+| `purchase` | `conversions` | — |
+| `campaign_name` | `Campanha` | maiúscula |
+| `ad_name` | `ad` | — |
+
 ## Google Sheets
 
 1. No [Google Cloud Console](https://console.cloud.google.com/), crie um projeto (ou use um existente), ative a **Google Sheets API** e crie uma **API key** (restrita à Sheets, se possível).

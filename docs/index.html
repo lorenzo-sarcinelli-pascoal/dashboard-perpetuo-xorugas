@@ -718,6 +718,89 @@ function rowsToObjects(rows) {
 }
 
 /* ============================================================
+   XORUGAS: planilha → chaves canônicas do motor (Hubla / metaads_daily)
+   Ajuste os fallbacks abaixo se mudar o export.
+   ============================================================ */
+function sheetValEmpty(v) {
+  return v === undefined || v === null || v === '';
+}
+
+function firstDefinedRow(row, keys) {
+  for (const k of keys) {
+    if (row && !sheetValEmpty(row[k])) return row[k];
+  }
+  return '';
+}
+
+/** utm_source da planilha → Meta_Ads para bater no filtro "Fontes" do painel */
+const XORUGAS_UTM_SOURCE_AS_META_ADS = new Set([
+  'meta', 'facebook', 'fb', 'instagram', 'ig', 'meta_ads', 'meta ads', 'anuncios meta', 'anúncios meta', 'fbads'
+]);
+
+function normalizeXorugasUtmSource(raw) {
+  const s = String(raw || '').trim();
+  const low = s.toLowerCase();
+  if (XORUGAS_UTM_SOURCE_AS_META_ADS.has(low)) return 'Meta_Ads';
+  return s;
+}
+
+/**
+ * Preenche chaves que processData() espera, sem apagar colunas originais.
+ * Se a linha já tiver payment_price, date, etc. (export antigo), não sobrescreve.
+ */
+function normalizeXorugasVenda(row) {
+  const out = { ...row };
+  if (sheetValEmpty(out.payment_price)) {
+    const p = firstDefinedRow(row, ['price_brl', 'price', 'offer_price', 'product_value']);
+    if (!sheetValEmpty(p)) out.payment_price = p;
+  }
+  if (sheetValEmpty(out.approved_date) && sheetValEmpty(out.order_date)) {
+    const ct = row.create_time;
+    const ut = row.update_time;
+    if (!sheetValEmpty(ct)) out.approved_date = ct;
+    if (!sheetValEmpty(ut)) out.order_date = ut;
+  }
+  if (sheetValEmpty(out.product_name) && !sheetValEmpty(out.offer_name)) {
+    out.product_name = out.offer_name;
+  }
+  out.utm_source = normalizeXorugasUtmSource(out.utm_source);
+  return out;
+}
+
+/**
+ * Export Meta Xorugas (PT) → nomes usados em processData / groupByCampaign.
+ * Cabeçalho "Campanha" é sensível a maiúsculas.
+ */
+function normalizeXorugasMeta(row) {
+  const out = { ...row };
+  if (sheetValEmpty(out.date)) {
+    const d = firstDefinedRow(row, ['data', 'id_data']);
+    if (!sheetValEmpty(d)) out.date = d;
+  }
+  if (!Object.prototype.hasOwnProperty.call(out, 'spend') || sheetValEmpty(out.spend)) {
+    if (Object.prototype.hasOwnProperty.call(row, 'gasto')) out.spend = row.gasto;
+  }
+  if (sheetValEmpty(out.impressions) && !sheetValEmpty(row.impressoes)) out.impressions = row.impressoes;
+  /* Cliques: clicks; se vazio, unique_clicks */
+  if (sheetValEmpty(out.inline_link_clicks)) {
+    if (!sheetValEmpty(row.clicks)) out.inline_link_clicks = row.clicks;
+    else if (!sheetValEmpty(row.unique_clicks)) out.inline_link_clicks = row.unique_clicks;
+  }
+  if (sheetValEmpty(out.landing_page_view) && !sheetValEmpty(row.land_page_views)) {
+    out.landing_page_view = row.land_page_views;
+  }
+  if (sheetValEmpty(out.lead) && !sheetValEmpty(row.leads)) out.lead = row.leads;
+  if (sheetValEmpty(out.purchase)) {
+    const conv = row.conversions;
+    if (!sheetValEmpty(conv)) out.purchase = conv;
+  }
+  if (sheetValEmpty(out.campaign_id) && !sheetValEmpty(row.campaign_id)) out.campaign_id = row.campaign_id;
+  if (sheetValEmpty(out.campaign_name) && !sheetValEmpty(row.Campanha)) out.campaign_name = row.Campanha;
+  if (sheetValEmpty(out.ad_name) && !sheetValEmpty(row.ad)) out.ad_name = row.ad;
+  return out;
+}
+
+/* ============================================================
    DATA ENGINE
    ============================================================ */
 function parseNum(v) {
@@ -737,11 +820,14 @@ function parseDate(v) {
   if (m) return m[1] + '-' + m[2] + '-' + m[3];
   const m2 = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
   if (m2) return m2[3] + '-' + m2[2] + '-' + m2[1];
+  /* ISO / Sheets datetime: 2025-03-15 14:30:00 ou 2025-03-15T14:30:00 */
+  const m3 = s.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
+  if (m3) return m3[1];
   return null;
 }
 
 function findNumericCampaignId(venda) {
-  for (const col of ['campaign_id', 'src', 'sck']) {
+  for (const col of ['campaign_id', 'src', 'sck', 'transaction_ext', 'offer_ext']) {
     const v = String(venda[col] || '');
     if (/^\d{10,}$/.test(v.trim())) return v.trim();
   }
@@ -1649,10 +1735,12 @@ async function loadAndRender() {
   $('btnSaveConfig').disabled = true;
 
   try {
-    const [rawVendas, rawMeta] = await Promise.all([
+    const [vRows, mRows] = await Promise.all([
       fetchSheet(cfg.sheetId, cfg.vendasSheet, cfg.apiKey).then(rowsToObjects),
       fetchSheet(cfg.sheetId, cfg.metaSheet, cfg.apiKey).then(rowsToObjects)
     ]);
+    const rawVendas = vRows.map(normalizeXorugasVenda);
+    const rawMeta = mRows.map(normalizeXorugasMeta);
 
     showStatus(`Vendas: ${rawVendas.length} linhas | Meta: ${rawMeta.length} linhas. Processando...`, 'loading');
 
