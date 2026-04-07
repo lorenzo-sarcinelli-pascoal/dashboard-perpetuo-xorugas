@@ -360,7 +360,7 @@
         <h3>Categorizacao de ofertas</h3>
         <div class="overflow-x">
           <table class="offer-table" id="offerTable">
-            <thead><tr><th>offer_name (auto-detectado)</th><th>Categoria</th></tr></thead>
+            <thead><tr><th>Oferta (nome + category da planilha)</th><th>Categoria</th></tr></thead>
             <tbody id="offerTableBody"></tbody>
           </table>
         </div>
@@ -390,7 +390,7 @@
           <div class="config-field">
             <label>Status vendas</label>
             <select id="cfgStatus">
-              <option value="paid">Apenas paid</option>
+              <option value="paid">Apenas efetivadas (paid/approved/completed)</option>
               <option value="all">Todos (paid + refunded)</option>
             </select>
           </div>
@@ -583,7 +583,7 @@ if (typeof Chart !== 'undefined' && typeof ChartDataLabels !== 'undefined') {
    CONFIG MODULE
    ============================================================ */
 const STORAGE_KEY = 'the_perpetuo_xorugas_dashboard_config';
-const OFFER_CATEGORIES = ['Produto Principal','Order Bump 1','Order Bump 2','Upsell','Ignorar'];
+const OFFER_CATEGORIES = ['Produto Principal','Order Bump 1','Order Bump 2','Upsell 1','Downsell 1','Ignorar'];
 const DEFAULT_OFFER_MAP = {};
 
 function loadConfig() {
@@ -732,6 +732,31 @@ function firstDefinedRow(row, keys) {
   return '';
 }
 
+function normalizeOfferCategory(rawCategory) {
+  const c = String(rawCategory || '').trim().toLowerCase();
+  if (!c) return 'Produto Principal';
+  if (c === 'produto principal' || c === 'principal') return 'Produto Principal';
+  if (c === 'order bump 1' || c === 'ob1' || c === 'orderbump1') return 'Order Bump 1';
+  if (c === 'order bump 2' || c === 'ob2' || c === 'orderbump2') return 'Order Bump 2';
+  if (c === 'upsell' || c === 'upsell 1' || c === 'up1') return 'Upsell 1';
+  if (c === 'downsell' || c === 'downsell 1' || c === 'ds1') return 'Downsell 1';
+  if (c === 'ignorar' || c === 'ignore') return 'Ignorar';
+  return String(rawCategory || '').trim();
+}
+
+function getOfferDisplayName(v) {
+  const name = String(v.offer_name || v.product_name || '').trim();
+  const catRaw = String(v.category || '').trim();
+  return catRaw ? `${name} — ${catRaw}` : name;
+}
+
+function getOfferCategoryForSale(v, offerMap) {
+  const displayName = getOfferDisplayName(v);
+  const mapped = offerMap[displayName];
+  if (!sheetValEmpty(mapped)) return mapped;
+  return normalizeOfferCategory(v.category);
+}
+
 /** utm_source da planilha → Meta_Ads para bater no filtro "Fontes" do painel */
 const XORUGAS_UTM_SOURCE_AS_META_ADS = new Set([
   'meta', 'facebook', 'fb', 'instagram', 'ig', 'meta_ads', 'meta ads', 'anuncios meta', 'anúncios meta', 'fbads'
@@ -752,12 +777,10 @@ function normalizeXorugasVenda(row) {
   if (sheetValEmpty(out.commision_value_brl) && !sheetValEmpty(row.comission_value_brl)) {
     out.commision_value_brl = row.comission_value_brl;
   }
-  if (sheetValEmpty(out.approved_date) && sheetValEmpty(out.order_date)) {
-    const ut = row.update_time;
-    if (!sheetValEmpty(ut)) {
-      out.approved_date = ut;
-      out.order_date = ut;
-    }
+  const ut = row.update_time;
+  if (!sheetValEmpty(ut)) {
+    out.approved_date = ut;
+    out.order_date = ut;
   }
   if (sheetValEmpty(out.product_name) && !sheetValEmpty(out.offer_name)) {
     out.product_name = out.offer_name;
@@ -796,8 +819,19 @@ function parseNum(v) {
   if (typeof v === 'number') return v;
   if (!v && v !== 0) return 0;
   const s = String(v).trim();
-  if (/^\d+\.\d+$/.test(s)) return parseFloat(s);
-  const normalized = s.replace(/\./g, '').replace(',', '.');
+  if (!s) return 0;
+  const cleaned = s.replace(/[^\d,.\-]/g, '');
+  if (!cleaned) return 0;
+  const lastComma = cleaned.lastIndexOf(',');
+  const lastDot = cleaned.lastIndexOf('.');
+  let normalized = cleaned;
+  if (lastComma > -1 && lastDot > -1) {
+    normalized = lastComma > lastDot
+      ? cleaned.replace(/\./g, '').replace(',', '.')
+      : cleaned.replace(/,/g, '');
+  } else if (lastComma > -1) {
+    normalized = cleaned.replace(/\./g, '').replace(',', '.');
+  }
   const n = parseFloat(normalized);
   return isNaN(n) ? 0 : n;
 }
@@ -822,6 +856,16 @@ function findNumericCampaignId(venda) {
 }
 
 function processData(rawVendas, rawMeta, cfg) {
+  const EFFECTIVE_STATUS = new Set(['paid', 'approved', 'completed', 'venda']);
+  const VALID_STATUS = new Set(['paid', 'approved', 'completed', 'venda', 'refunded']);
+  const diagnostics = {
+    rawSales: rawVendas.length,
+    statusCountsRaw: {},
+    afterStatusFilter: 0,
+    afterDateFilter: 0,
+    afterSourceFilter: 0
+  };
+
   let vendas = rawVendas.map(v => {
     const platFee = parseNum(v.commission_plataform);
     const liquidoBrl = firstDefinedRow(v, ['commision_value_brl', 'comission_value_brl']);
@@ -833,7 +877,7 @@ function processData(rawVendas, rawMeta, cfg) {
       _price: hasLiquidoXorugas ? net : grossLegacy,
       _platformFee: platFee,
       _netPrice: net,
-      _date: parseDate(v.approved_date || v.order_date),
+      _date: parseDate(v.update_time || v.approved_date || v.order_date),
       _source: String(v.utm_source || '').trim(),
       _status: String(v.status || v.src || '').toLowerCase().trim()
     };
@@ -842,27 +886,30 @@ function processData(rawVendas, rawMeta, cfg) {
   /* Handle Hubla column-shift: detect status in non-standard columns.
      Pipes in utm_medium cause downstream columns to shift, so "paid"/"refunded"
      may land in src, sck, adset_id, ad_id, or campaign_id instead of status. */
-  const VALID_STATUS = ['paid','refunded','venda'];
   vendas.forEach(v => {
-    if (!VALID_STATUS.includes(v._status)) {
+    if (!VALID_STATUS.has(v._status)) {
       for (const col of Object.keys(v)) {
         const val = String(v[col] || '').toLowerCase().trim();
-        if (VALID_STATUS.includes(val)) { v._status = val; break; }
+        if (VALID_STATUS.has(val)) { v._status = val; break; }
       }
     }
-    if (!VALID_STATUS.includes(v._status)) v._status = 'paid';
+    if (!VALID_STATUS.has(v._status)) v._status = 'unknown';
+    diagnostics.statusCountsRaw[v._status] = (diagnostics.statusCountsRaw[v._status] || 0) + 1;
     if (!v._source || v._source === '') v._source = 'desconhecido';
   });
 
   if (cfg.statusFilter === 'paid') {
-    vendas = vendas.filter(v => v._status === 'paid' || v._status === 'venda');
+    vendas = vendas.filter(v => EFFECTIVE_STATUS.has(v._status));
   }
+  diagnostics.afterStatusFilter = vendas.length;
 
   if (cfg.dateFrom) vendas = vendas.filter(v => !v._date || v._date >= cfg.dateFrom);
   if (cfg.dateTo) vendas = vendas.filter(v => !v._date || v._date <= cfg.dateTo);
+  diagnostics.afterDateFilter = vendas.length;
   if (cfg.sources && cfg.sources.length > 0) {
     vendas = vendas.filter(v => cfg.sources.includes(v._source) || v._source === 'desconhecido');
   }
+  diagnostics.afterSourceFilter = vendas.length;
 
   let meta = rawMeta.map(m => ({
     ...m,
@@ -880,7 +927,7 @@ function processData(rawVendas, rawMeta, cfg) {
   if (cfg.dateFrom) meta = meta.filter(m => !m._date || m._date >= cfg.dateFrom);
   if (cfg.dateTo) meta = meta.filter(m => !m._date || m._date <= cfg.dateTo);
 
-  const offerNames = [...new Set(vendas.map(v => String(v.offer_name || v.product_name || '').trim()).filter(Boolean))];
+  const offerNames = [...new Set(vendas.map(v => getOfferDisplayName(v)).filter(Boolean))];
 
   const totalSpend = meta.reduce((s, m) => s + m._spend, 0);
   const totalRevenue = vendas.reduce((s, v) => s + v._netPrice, 0);
@@ -893,8 +940,7 @@ function processData(rawVendas, rawMeta, cfg) {
   const categorized = {};
   OFFER_CATEGORIES.forEach(c => { categorized[c] = { sales: 0, revenue: 0 }; });
   vendas.forEach(v => {
-    const name = String(v.offer_name || v.product_name || '').trim();
-    const cat = offerMap[name] || 'Produto Principal';
+    const cat = getOfferCategoryForSale(v, offerMap);
     if (!categorized[cat]) categorized[cat] = { sales: 0, revenue: 0 };
     categorized[cat].sales++;
     categorized[cat].revenue += v._netPrice;
@@ -903,15 +949,15 @@ function processData(rawVendas, rawMeta, cfg) {
   const principalSales = categorized['Produto Principal']?.sales || 0;
   const ob1Sales = categorized['Order Bump 1']?.sales || 0;
   const ob2Sales = categorized['Order Bump 2']?.sales || 0;
+  const upsell1Sales = categorized['Upsell 1']?.sales || 0;
+  const downsell1Sales = categorized['Downsell 1']?.sales || 0;
   const takeRateOB1 = principalSales > 0 ? ob1Sales / principalSales : 0;
   const takeRateOB2 = principalSales > 0 ? ob2Sales / principalSales : 0;
+  const takeRateUpsell1 = principalSales > 0 ? upsell1Sales / principalSales : 0;
+  const takeRateDownsell1 = principalSales > 0 ? downsell1Sales / principalSales : 0;
   const cacGeral = totalSales > 0 ? totalSpend / totalSales : 0;
 
-  const principalSalesMetaAds = vendas.filter(v => {
-    const name = String(v.offer_name || v.product_name || '').trim();
-    const cat = (cfg.offerMap || {})[name] || 'Produto Principal';
-    return cat === 'Produto Principal' && v._source === 'Meta_Ads';
-  }).length;
+  const principalSalesMetaAds = vendas.filter(v => getOfferCategoryForSale(v, cfg.offerMap || {}) === 'Produto Principal' && v._source === 'Meta_Ads').length;
   const cpaPrincipal = principalSales > 0 ? totalSpend / principalSales : 0;
   const cpaPrincipalMeta = principalSalesMetaAds > 0 ? totalSpend / principalSalesMetaAds : 0;
   const ticketMedio = principalSales > 0 ? totalRevenue / principalSales : 0;
@@ -939,10 +985,10 @@ function processData(rawVendas, rawMeta, cfg) {
   return {
     vendas, meta, offerNames,
     kpi: {
-      totalRevenue, totalSpend, totalPlatformFee, roas, profit, totalSales, principalSales, ob1Sales, ob2Sales, takeRateOB1, takeRateOB2, cacGeral, cpaPrincipal, cpaPrincipalMeta, principalSalesMetaAds, ticketMedio, salesMetaAds, salesOrganic,
+      totalRevenue, totalSpend, totalPlatformFee, roas, profit, totalSales, principalSales, ob1Sales, ob2Sales, upsell1Sales, downsell1Sales, takeRateOB1, takeRateOB2, takeRateUpsell1, takeRateDownsell1, cacGeral, cpaPrincipal, cpaPrincipalMeta, principalSalesMetaAds, ticketMedio, salesMetaAds, salesOrganic,
       totalImpressions, totalClicks, totalLpv, totalIc, ctr, connectRate, icPerLpv, convPageMeta, convPageTotal, convCheckoutMeta, convCheckoutTotal
     },
-    categorized, byDay, byCampaign, byCreative, bySource, byOffer
+    categorized, byDay, byCampaign, byCreative, bySource, byOffer, diagnostics
   };
 }
 
@@ -1049,8 +1095,8 @@ function groupBySource(vendas) {
 function groupByOffer(vendas, offerMap) {
   const offers = {};
   vendas.forEach(v => {
-    const name = String(v.offer_name || v.product_name || '').trim();
-    const cat = offerMap[name] || 'Produto Principal';
+    const name = getOfferDisplayName(v);
+    const cat = getOfferCategoryForSale(v, offerMap);
     if (!offers[name]) offers[name] = { name, category: cat, sales: 0, revenue: 0 };
     offers[name].sales++;
     offers[name].revenue += v._netPrice;
@@ -1099,6 +1145,10 @@ function renderKPIs(kpi) {
     <article class="card"><div class="kpi-label">Vendas OB2</div><div class="kpi-value kpi-sm">${fmtNum(kpi.ob2Sales)}</div><div class="delta">Order Bump 2</div></article>
     <article class="card"><div class="kpi-label">Take rate OB1</div><div class="kpi-value kpi-sm">${fmtPct(kpi.takeRateOB1)}</div><div class="delta">OB1 / Principal</div></article>
     <article class="card"><div class="kpi-label">Take rate OB2</div><div class="kpi-value kpi-sm">${fmtPct(kpi.takeRateOB2)}</div><div class="delta">OB2 / Principal</div></article>
+    <article class="card"><div class="kpi-label">Vendas Upsell 1</div><div class="kpi-value kpi-sm">${fmtNum(kpi.upsell1Sales)}</div><div class="delta">Upsell 1</div></article>
+    <article class="card"><div class="kpi-label">Vendas Downsell 1</div><div class="kpi-value kpi-sm">${fmtNum(kpi.downsell1Sales)}</div><div class="delta">Downsell 1</div></article>
+    <article class="card"><div class="kpi-label">Take rate Upsell 1</div><div class="kpi-value kpi-sm">${fmtPct(kpi.takeRateUpsell1)}</div><div class="delta">Upsell 1 / Principal</div></article>
+    <article class="card"><div class="kpi-label">Take rate Downsell 1</div><div class="kpi-value kpi-sm">${fmtPct(kpi.takeRateDownsell1)}</div><div class="delta">Downsell 1 / Principal</div></article>
     <article class="card"><div class="kpi-label">Ticket Medio</div><div class="kpi-value kpi-sm">${fmtBRL(kpi.ticketMedio)}</div><div class="delta">Fat. / ${fmtNum(kpi.principalSales)} vendas princ.</div></article>
     <article class="card"><div class="kpi-label">CAC geral</div><div class="kpi-value kpi-sm">${fmtBRL(kpi.cacGeral)}</div><div class="delta">Invest / vendas totais</div></article>
     <article class="card"><div class="kpi-label">CPA Principal</div><div class="kpi-value kpi-sm">${fmtBRL(kpi.cpaPrincipal)}</div><div class="delta">Invest / ${fmtNum(kpi.principalSales)} vendas princ.</div></article>
@@ -1182,7 +1232,9 @@ function renderCharts(byDay, kpi) {
       datasets: [
         { label: 'Principal', data: byDay.map(d => d.salesPrincipal), backgroundColor: 'rgba(23,150,212,.7)' },
         { label: 'OB1', data: byDay.map(d => d.salesOB1), backgroundColor: 'rgba(255,195,15,.7)' },
-        { label: 'OB2', data: byDay.map(d => d.salesOB2), backgroundColor: 'rgba(98,192,238,.7)' }
+        { label: 'OB2', data: byDay.map(d => d.salesOB2), backgroundColor: 'rgba(98,192,238,.7)' },
+        { label: 'Upsell 1', data: byDay.map(d => d.salesUpsell1), backgroundColor: 'rgba(126,87,194,.7)' },
+        { label: 'Downsell 1', data: byDay.map(d => d.salesDownsell1), backgroundColor: 'rgba(255,138,101,.7)' }
       ]
     },
     options: { ...chartDefaults, scales: { ...chartDefaults.scales, x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true } } }
@@ -1699,17 +1751,20 @@ function enrichDayWithOfferSales(byDay, vendas, offerMap) {
     d.salesPrincipalMeta = 0;
     d.salesOB1 = 0;
     d.salesOB2 = 0;
+    d.salesUpsell1 = 0;
+    d.salesDownsell1 = 0;
     d.salesOther = 0;
   });
   vendas.forEach(v => {
     const d = v._date; if (!d || !dayMap[d]) return;
-    const name = String(v.offer_name || v.product_name || '').trim();
-    const cat = offerMap[name] || 'Produto Principal';
+    const cat = getOfferCategoryForSale(v, offerMap);
     if (cat === 'Produto Principal') {
       dayMap[d].salesPrincipal++;
       if (v._source === 'Meta_Ads') dayMap[d].salesPrincipalMeta++;
     } else if (cat === 'Order Bump 1') dayMap[d].salesOB1++;
     else if (cat === 'Order Bump 2') dayMap[d].salesOB2++;
+    else if (cat === 'Upsell 1') dayMap[d].salesUpsell1++;
+    else if (cat === 'Downsell 1') dayMap[d].salesDownsell1++;
     else dayMap[d].salesOther++;
   });
 }
@@ -1785,7 +1840,13 @@ async function loadAndRender() {
 
     setDashboardView(activeDashboardView);
 
-    showStatus(`Dados carregados com sucesso.`, 'ok');
+    const d = finalData.diagnostics || {};
+    const rawCounts = d.statusCountsRaw || {};
+    const statusCompact = Object.keys(rawCounts).sort().map(k => `${k}:${rawCounts[k]}`).join(', ');
+    showStatus(
+      `OK · status bruto [${statusCompact || 'sem status'}] · após status: ${fmtNum(d.afterStatusFilter || 0)} · após data: ${fmtNum(d.afterDateFilter || 0)} · final: ${fmtNum(d.afterSourceFilter || finalData.vendas.length)} vendas`,
+      'ok'
+    );
   } catch (err) {
     showStatus('Erro: ' + err.message, 'err');
     console.error(err);
